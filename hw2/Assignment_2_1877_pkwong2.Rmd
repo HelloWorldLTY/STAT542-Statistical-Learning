@@ -1,0 +1,338 @@
+---
+title: "Assignment_2_1877_pkwong2"
+output: html_document
+---
+
+> Jiayi Chen (jiayic15)
+
+> Tianyu Liu (tianyul4)
+
+> Wong Ping Kin Christopher (pkwong2)
+
+Contributions: We each wrote our own codes. After discussion, we put up ideas and thoughts together to came up with this report. Our contributions are equal.
+
+```{r setup}
+library(knitr)
+knitr::opts_chunk$set(dev='svg')
+opts_chunk$set(cache = TRUE, autodep = TRUE)
+set.seed(1877)
+```
+
+```{r}
+library(glmnet)
+library(pls)
+```
+
+## Part 1 - Lasso
+
+```{r}
+coding2 <- read.csv("Coding2_myData.csv", header = TRUE)
+str(coding2)
+```
+
+```{r}
+X = as.matrix(coding2[, -14])
+y = coding2$Y
+dim(X)
+```
+
+### Implementation
+
+```{r}
+MyLasso = function(X, y, lam.seq, maxit = 500, standardize = TRUE) {
+    # X: n-by-p design matrix without the intercept
+    # y: n-by-1 response vector
+    # lam.seq: sequence of lambda values (arranged from large to small)
+    # maxit: number of updates for each lambda
+    # Center/Scale X
+    # Center y
+    n = length(y)
+    p = dim(X)[2]
+    nlam = length(lam.seq)
+    ##############################
+    # YOUR CODE:
+    # Record the corresponding means and scales
+    # For example,
+    # y.mean = mean(y)
+    # Xs = centered and scaled X
+    ##############################
+    if(standardize == TRUE)
+    {
+      Xmeanv = apply(X,2,mean)
+      Xsdv = apply(X,2,sd)*sqrt((n-1)/n)
+      Xn = t((t(X)-Xmeanv)/Xsdv) #normalize
+      Xs=Xn
+      ymeanv = mean(y)
+      ysdv = sd(y)*sqrt((n-1)/n)
+      y = (y-ymeanv)/ysdv
+      #final
+    }
+    # Initilize coef vector b and residual vector r
+    b = rep(0, p)
+    r = y
+    B = matrix(nrow = nlam, ncol = p + 1)
+    # Triple nested loop
+    for (m in 1:nlam) {
+        lam = 2 * n * lam.seq[m]/ysdv #must use log
+        for (step in 1:maxit) {
+            for (j in 1:p) {
+                r = r + (Xs[, j] * b[j])
+                b[j] = one_var_lasso(r, Xs[, j], lam)
+                r = r - Xs[, j] * b[j]
+            }
+        }
+        B[m, ] = c(0, b)
+    }
+    ##############################
+    # YOUR CODE:
+    # Scale back the coefficients;
+    # Update the intercepts stored in B[, 1]
+    ##############################
+    if(standardize == TRUE)
+    {
+      for(m in 1:nlam)
+      {
+        B[m,-1] = B[m,-1]/Xsdv*ysdv
+        B[m,1] = ymeanv-sum(B[m,-1]%*%Xmeanv)
+      }
+      #final
+    }
+    return(t(B))
+}
+```
+
+```{r}
+one_var_lasso = function(r, x, lam) {
+    xx = sum(x^2)
+    xr = sum(r * x)
+    b = (abs(xr) - lam/2)/xx
+    b = sign(xr) * ifelse(b > 0, b, 0)
+    return(b)
+}
+```
+
+```{r}
+lam.seq = exp(seq(-1, -8, length.out = 80))
+myout = MyLasso(X, y, lam.seq, maxit = 100) 
+rownames(myout) = c("Intercept", colnames(X)) 
+dim(myout)
+```
+
+```{r}
+x.index = log(lam.seq)
+beta = myout[-1, ]  # beta is a 13-by-80 matrix
+matplot(x.index, t(beta),
+        xlim = c(min(x.index), max(x.index)),
+        lty = 1,
+        xlab = "Log Lambda",
+        ylab = "Coefficients",
+        type="l", 
+        lwd = 1)
+
+# You can add variable names to each path
+var.names = colnames(X)
+nvar = length(var.names)
+xpos = rep(min(x.index), nvar)
+ypos = beta[, ncol(beta)]
+text(xpos, ypos, var.names, cex=0.5, pos=2)
+```
+
+
+### Standard Library
+
+```{r}
+lam.seq = exp(seq(-1, -8, length.out = 80))
+lasso.fit = glmnet(X, y, alpha = 1, lambda = lam.seq)
+plot(lasso.fit, xvar = "lambda")
+```
+
+```{r}
+lam.seq = exp(seq (-1, -8, length.out = 80)) 
+myout = MyLasso(X, y, lam.seq, maxit = 50)
+```
+
+```{r}
+lasso.fit = glmnet(X, y, alpha = 1, lambda = lam.seq) 
+max(abs(coef(lasso.fit) - myout)) #less than 0.005
+```
+## Part 2 - Simulation Study
+
+```{r}
+boston2 <- read.csv("BostonData2.csv", header = TRUE)
+boston2$X <- NULL
+```
+
+```{r}
+boston3 <- read.csv("BostonData3.csv", header = TRUE)
+boston3$X <- NULL
+```
+
+```{r}
+Sampling <- function(dataset) {
+  numData <- nrow(dataset)
+  numTrain <- numData * 0.75
+  idxTrain <- sample(numData, numTrain)
+  return(list(
+    train = dataset[idxTrain, ],
+    test = dataset[-idxTrain, ]
+  ))
+}
+```
+
+```{r}
+Mse <- function(prediction, actual) {
+  return(mean((prediction - actual) ^ 2))
+}
+```
+
+### Linear
+
+```{r}
+TestLinear <- function(trainData, testData) {
+  model <- lm(Y ~ ., data = trainData)
+  prediction <- predict(model, newdata = trainData)
+  return(Mse(predict(model, newdata = testData), testData$Y))
+}
+```
+
+### Ridge
+
+```{r}
+Ridge <- function(dataset, lambda = NULL) {
+  y <- dataset[, 1]
+  x <- data.matrix(dataset[, -1])
+  return(cv.glmnet(x, y, alpha = 0, lambda = lambda))
+}
+```
+
+```{r}
+TestRidgeMin <- function(trainData, testData, lambda = NULL) {
+  model <- Ridge(trainData, lambda)
+  bestLambda <- model$lambda.min
+  yTest <- testData[, 1]
+  xTest <- data.matrix(testData[, -1])
+  return(Mse(predict(model, s = bestLambda, newx = xTest), yTest))
+}
+```
+
+```{r}
+TestRidgeLse <- function(trainData, testData, lambda = NULL) {
+  model <- Ridge(trainData, lambda)
+  bestLambda <- model$lambda.1se
+  yTest <- testData[, 1]
+  xTest <- data.matrix(testData[, -1])
+  return(Mse(predict(model, s = bestLambda, newx = xTest), yTest))
+}
+```
+
+### Lasso
+
+```{r}
+Lasso <- function(dataset, lambda = NULL) {
+  y <- dataset[, 1]
+  x <- data.matrix(dataset[, -1])
+  return(cv.glmnet(x, y, alpha = 1, lambda = lambda))
+}
+```
+
+```{r}
+TestLassoMin <- function(trainData, testData, lambda = NULL) {
+  model <- Lasso(trainData, lambda)
+  bestLambda <- model$lambda.min
+  yTest <- testData[, 1]
+  xTest <- data.matrix(testData[, -1])
+  return(Mse(predict(model, s = bestLambda, newx = xTest), yTest))
+}
+```
+
+```{r}
+TestLassoLse <- function(trainData, testData, lambda = NULL) {
+  model <- Lasso(trainData, lambda)
+  bestLambda <- model$lambda.1se
+  yTest <- testData[, 1]
+  xTest <- data.matrix(testData[, -1])
+  return(Mse(predict(model, s = bestLambda, newx = xTest), yTest))
+}
+```
+
+```{r}
+TestLassoRefit <- function(trainData, testData, lambda = NULL) {
+  model <- Lasso(trainData, lambda)
+  bestLambda <- model$lambda.1se
+  coefficients <- predict(model, s = bestLambda, type = "coefficients")
+  rowNames <- row.names(coefficients)[which(coefficients != 0)[-1]]
+  refitModel <- lm(Y ~ ., trainData[, c("Y", rowNames)])
+  return(Mse(predict(refitModel, newdata = testData), testData$Y))
+}
+```
+
+### Pcr
+
+```{r}
+TestPcr <- function(trainData, testData) {
+  model <- pcr(Y ~ ., data = trainData, validation = "CV")
+  CVerr <- RMSEP(model)$val[1, , ]
+  adjCVerr <- RMSEP(model)$val[2, , ]
+  best.ncomp <- which.min(CVerr) - 1
+  if (best.ncomp == 0) {
+    Ytest.pred <- mean(trainData$Y)
+  } else {
+    Ytest.pred <- predict(model, testData, ncomp = best.ncomp)
+  }
+  return(Mse(Ytest.pred, testData$Y))
+}
+```
+
+### Simulation
+
+```{r}
+bostonMse <- data.frame(
+  Linear = rep(0, 50),
+  RidgeMin = rep(0, 50),
+  RidgeLse = rep(0, 50),
+  LassoMin = rep(0, 50),
+  LassoLse = rep(0, 50),
+  LassoRefit = rep(0, 50),
+  Pcr = rep(0, 50)
+)
+
+for (i in 1:50) {
+  dataset <- Sampling(boston2)
+  bostonMse$Linear[i] <- TestLinear(dataset$train, dataset$test)
+  bostonMse$RidgeMin[i] <- TestRidgeMin(dataset$train, dataset$test)
+  bostonMse$RidgeLse[i] <- TestRidgeLse(dataset$train, dataset$test)
+  bostonMse$LassoMin[i] <- TestLassoMin(dataset$train, dataset$test)
+  bostonMse$LassoLse[i] <- TestLassoLse(dataset$train, dataset$test)
+  bostonMse$LassoRefit[i] <- TestLassoRefit(dataset$train, dataset$test)
+  bostonMse$Pcr[i] <- TestPcr(dataset$train, dataset$test)
+}
+
+boxplot(bostonMse, las = 2, main = "Boston2", ylab = "MSPE")
+```
+
+```{r}
+boston3Mse <- data.frame(
+  RidgeMin = rep(0, 50),
+  RidgeLse = rep(0, 50),
+  LassoMin = rep(0, 50),
+  LassoLse = rep(0, 50),
+  LassoRefit = rep(0, 50),
+  Pcr = rep(0, 50)
+)
+
+for (i in 1:50) {
+  dataset <- Sampling(boston3)
+  boston3Mse$RidgeMin[i] <- TestRidgeMin(dataset$train, dataset$test)
+  boston3Mse$RidgeLse[i] <- TestRidgeLse(dataset$train, dataset$test)
+  boston3Mse$LassoMin[i] <- TestLassoMin(dataset$train, dataset$test)
+  boston3Mse$LassoLse[i] <- TestLassoLse(dataset$train, dataset$test)
+  boston3Mse$LassoRefit[i] <- TestLassoRefit(dataset$train, dataset$test)
+  boston3Mse$Pcr[i] <- TestPcr(dataset$train, dataset$test)
+}
+
+boxplot(boston3Mse, las = 2, main = "Boston3", ylab = "MSPE")
+```
+
+In both datasets, Lasso Min performed the best.
+
+By adding the noise predictors, Ridge and PCR methods hava a much higher MSPE increase compared to Lasso. It suggests that the Ridge and PCR is very sensitive to noise.

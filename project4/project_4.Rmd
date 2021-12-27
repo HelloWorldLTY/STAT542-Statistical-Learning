@@ -1,0 +1,188 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+#System I
+```{r}
+library(dplyr)
+library(ggplot2)
+library(recommenderlab)
+library(DT)
+library(data.table)
+library(reshape2)
+library(knitr)
+```
+##Load Movie and rating data
+```{r}
+myurl = "https://liangfgithub.github.io/MovieData/"
+#load movies data
+movies = readLines(paste0(myurl,'movies.dat?raw=true'))
+movies = strsplit(movies, split = "::", fixed = TRUE, useBytes = TRUE)
+movies = matrix(unlist(movies), ncol = 3, byrow = TRUE)
+movies = data.frame(movies, stringsAsFactors = FALSE)
+colnames(movies) = c('MovieID', 'Title', 'Genres')
+movies$MovieID = as.integer(movies$MovieID)
+#load rating data 
+ratings = read.csv(paste0(myurl, 'ratings.dat?raw=true'), 
+                   sep = ':',
+                   colClasses = c('integer', 'NULL'), 
+                   header = FALSE)
+colnames(ratings) = c('UserID', 'MovieID', 'Rating', 'Timestamp')
+```
+##Extract Genres
+```{r}
+genres = as.data.frame(movies$Genres, stringsAsFactors = FALSE)
+tmp = as.data.frame(tstrsplit(genres[,1],'[|]',type.convert = TRUE),
+                    stringsAsFactors = FALSE)
+genre_list = c("Action", "Adventure", "Animation", 
+               "Children's", "Comedy", "Crime",
+               "Documentary", "Drama", "Fantasy",
+               "Film-Noir", "Horror", "Musical", 
+               "Mystery", "Romance", "Sci-Fi", 
+               "Thriller", "War", "Western")
+# convert genre data into numeric format
+genre_matrix = matrix(0, nrow(movies), length(genre_list))
+for(i in 1:nrow(tmp)) {
+  genre_matrix[i,genre_list %in% tmp[i,]] = 1
+}
+remove("tmp", "genres")
+# combine movie id and genre_matrix
+genre_frame = as.data.frame(genre_matrix)
+genre_frame = cbind(movies$MovieID, genre_frame)
+colnames(genre_frame) = c("MovieID", genre_list)
+```
+##Scheme I
+```{r}
+#user input 
+genre_type = "Horror"
+
+#extra movies of that genre
+genre_movies = genre_frame[(which(genre_frame[[genre_type]]== 1)),]
+genre_movies_rating = ratings %>% 
+  group_by(MovieID) %>%
+  summarize(ratings_per_movie=n(), ave_ratings = mean(Rating)) %>%
+  right_join(genre_movies, by = 'MovieID') %>%
+  left_join(movies,by='MovieID')
+#sort by score
+genre_movies_rating1 = genre_movies_rating[order(-genre_movies_rating$ave_ratings),]
+head(genre_movies_rating1)
+
+```
+```{r}
+#emove the movies that amount of ratings is less than 10
+genre_movies_rating1 = genre_movies_rating1[(genre_movies_rating1$ratings_per_movie >= 10),]
+head(genre_movies_rating1)
+```
+##Scheme II
+```{r}
+#Rank movies based on popularity
+genre_movies_rating2 = genre_movies_rating[order(-genre_movies_rating$ratings_per_movie),]
+head(genre_movies_rating2)
+```
+#System II
+##Data Preprocessing 
+```{r}
+myurl = "https://liangfgithub.github.io/MovieData/"
+ratings = read.csv(paste0(myurl, 'ratings.dat?raw=true'), 
+                   sep = ':',
+                   colClasses = c('integer', 'NULL'), 
+                   header = FALSE)
+colnames(ratings) = c('UserID', 'MovieID', 'Rating', 'Timestamp')
+ratings$Timestamp = NULL
+```
+
+```{r}
+i = paste0('u', ratings$UserID)
+j = paste0('m', ratings$MovieID)
+x = ratings$Rating
+tmp = data.frame(i, j, x, stringsAsFactors = T)
+Rmat_data = sparseMatrix(as.integer(tmp$i), as.integer(tmp$j), x = tmp$x)
+rownames(Rmat_data) = levels(tmp$i)
+colnames(Rmat_data) = levels(tmp$j)
+Rmat = new('realRatingMatrix', data = Rmat_data)
+```
+
+```{r}
+# train-test cross-valication
+e_scheme = evaluationScheme(Rmat, method = 'cross-validation', k = 10, given=15, goodRating=0)
+```
+
+##User-based Collaborative Filtering
+```{r}
+ubcf_results = data.frame(RMSE=rep(0,10),MSE=rep(0,10),MAE=rep(0,10))
+for(i in 1:10) {
+  train_mat = getData(e_scheme,run = i, 'train')
+  test_mat = getData(e_scheme, run = i, 'known')
+  eval_mat = getData(e_scheme, run = i, 'unknown')
+  #train
+  rec_UBCF = Recommender(train_mat,method = 'UBCF', parameter = list(normalize = 'Z-score',
+                                                                     method = 'Cosine',
+                                                                     nn = 25
+                                                                     ))
+  recom = predict(rec_UBCF, test_mat, type = 'ratings')
+  
+  #accuracy 
+  acc = calcPredictionAccuracy(recom, eval_mat)
+  #save result 
+  ubcf_results$RMSE[i] = acc[1]
+  ubcf_results$MSE[i] = acc[2]
+  ubcf_results$MAE[i] = acc[3]
+}
+write.csv(ubcf_results,'ubcf_rmse.csv')
+```
+
+```{r}
+#plot the result of RMSE
+ubcf_results = read.csv('ubcf_rmse.csv')
+rmse_df = data.frame(iteration = seq(1,10),RMSE = ubcf_results$RMSE)
+kable(rmse_df, align='c')
+```
+```{r}
+plot(ubcf_results$RMSE, ylim=c(0,2), type='b', col='darkorange', main="UBCF RMSE", xlab="iteration", ylab="RMSE")
+```
+##Item-based Collaborative Filtering
+```{r}
+ibcf_results = data.frame(RMSE=rep(0,10), MSE=rep(0,10), MAE=rep(0,10))
+for(i in 1:10) {
+  train_mat = getData(e_scheme, run = i, 'train')
+  test_mat = getData(e_scheme, run = i, 'known')
+  eval_mat = getData(e_scheme, run = i, 'unknown')
+  # train
+  rec_IBCF = Recommender(train_mat, method = 'IBCF',
+                         parameter = list(normalize = 'z-score', 
+                                          method = 'cosine', 
+                                          k = 30))
+  recom = predict(rec_IBCF, 
+                  test_mat, type = 'ratings')
+  # accuracy
+  acc = calcPredictionAccuracy(recom, eval_mat)
+  # save result
+  ibcf_results$RMSE[i] = acc[1]
+  ibcf_results$MSE[i] = acc[2]
+  ibcf_results$MAE[i] = acc[3]
+}
+write.csv(ibcf_results, 'ibcf_rmse.csv')
+```
+
+```{r}
+#Plot the results of RMSE
+ibcf_results = read.csv('ibcf_rmse.csv')
+rmse_df = data.frame(iteration = seq(1,10), RMSE = ibcf_results$RMSE)
+kable(rmse_df, align="c")
+```
+
+```{r}
+plot(ibcf_results$RMSE, ylim=c(0,2), type='b', col='darkorange', main="IBCF RMSE", xlab="iteration", ylab="RMSE")
+```
+
+
+
+
+
+
+
+
+
+
+
+

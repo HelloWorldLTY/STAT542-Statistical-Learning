@@ -1,0 +1,313 @@
+---
+title: "Hw2"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# Part 1
+```{r}
+myData = read.csv("Coding2_myData.csv")
+X = as.matrix(myData[, -14])
+y = myData$Y
+dim(X)
+```
+
+
+```{r}
+one_var_lasso = function(r, x, lam) {
+    xx = sum(x^2)
+    xr = sum(r * x)
+    b = (abs(xr) - lam/2)/xx
+    b = sign(xr) * ifelse(b > 0, b, 0)
+    return(b)
+}
+
+MyLasso = function(X, y, lam.seq, maxit = 500, standardize=T) {
+    
+    # X: n-by-p design matrix without the intercept 
+    # y: n-by-1 response vector 
+    # lam.seq: sequence of lambda values (arranged from large to small)
+    # maxit: number of updates for each lambda 
+    # Center/Scale X
+    # Center y
+  
+    n = length(y)
+    p = dim(X)[2]
+    nlam = length(lam.seq)
+    
+
+    ##############################
+    # YOUR CODE: 
+    # Record the corresponding means and scales
+    # For example, 
+    # y.mean = mean(y)
+    # Xs = centered and scaled X
+    ##############################
+    if(standardize==T)
+    {
+      Xmeanv = apply(X,2,mean)
+      Xsdv = apply(X,2,sd)*sqrt((n-1)/n)
+      Xn = t((t(X)-Xmeanv)/Xsdv) #normalize
+      Xs=Xn
+      
+      ymeanv = mean(y)
+      ysdv = sd(y)*sqrt((n-1)/n)
+      y = (y-ymeanv)/ysdv
+      #final
+    }
+    
+
+    # Initilize coef vector b and residual vector r
+    b = rep(0, p)
+    r = y
+    B = matrix(nrow = nlam, ncol = p + 1)
+    
+    # Triple nested loop
+    for (m in 1:nlam) {
+        lam = 2 * n * lam.seq[m]/ysdv #must use log
+        for (step in 1:maxit) {
+            for (j in 1:p) {
+                r = r + (Xs[, j] * b[j])
+                b[j] = one_var_lasso(r, Xs[, j], lam)
+                r = r - Xs[, j] * b[j]
+            }
+        }
+        B[m, ] = c(0, b)
+    }
+   
+    ##############################
+    # YOUR CODE:
+    # Scale back the coefficients;
+    # Update the intercepts stored in B[, 1]
+    ##############################
+    if(standardize==T)
+    {
+      for(m in 1:nlam)
+      {
+        B[m,-1] = B[m,-1]/Xsdv*ysdv
+        B[m,1] = ymeanv-sum(B[m,-1]%*%Xmeanv)
+      }
+      #final
+    }
+    
+    return(t(B))
+    
+}
+```
+
+```{r}
+lam.seq = exp(seq(-1, -8, length.out = 80))
+myout = MyLasso(X, y, lam.seq, maxit = 50) 
+rownames(myout) = c("Intercept", colnames(X)) 
+dim(myout)
+```
+```{r}
+x.index = log(lam.seq)
+beta = myout[-1, ]  # beta is a 13-by-80 matrix
+matplot(x.index, t(beta),
+        xlim = c(min(x.index), max(x.index)),
+        lty = 1,
+        xlab = "Log Lambda",
+        ylab = "Coefficients",
+        type="l", 
+        lwd = 1)
+```
+```{r}
+library(glmnet)
+lasso.fit = glmnet(X, y, alpha = 1, lambda = lam.seq)
+# coef(lasso.fit)
+write.csv(as.matrix(coef(lasso.fit)), file = "Coding2_lasso_coefs.csv", 
+          row.names = FALSE)
+max(abs(coef(lasso.fit) - myout))
+```
+```{r}
+plot(lasso.fit, xvar = "lambda")
+```
+
+# Part 2
+
+```{r}
+library(glmnet) 
+library(pls)
+set.seed(5820)
+```
+```{r}
+myData = read.csv("BostonData2.csv")
+myData = myData[, -1]
+dim(myData)
+```
+```{r}
+myData
+```
+
+```{r}
+X = data.matrix(myData[,-1])  
+Y = myData[,1] 
+```
+
+
+```{r}
+library(reshape2)
+library(ggplot2)
+```
+
+```{r}
+T = 50
+n = length(Y)
+MSPE = matrix(0,50,7)
+colnames(MSPE) = c("Full", "R_min", "R_1se", "L_min", "L_1se", "L_Refit", "PCR")
+for(i in 1:50){
+    ntest = round(n * 0.25)  # test set size
+    ntrain = n-ntest  # training set size
+    all.test.id = matrix(0, ntest, 50)  #
+    for(t in 1:50){
+        all.test.id[, t] = sample(1:n, ntest)
+    }
+    save(all.test.id, file="alltestID.RData")
+    test.id = all.test.id[,i]
+    #full model
+    full.model = lm(Y ~ ., data = myData[-test.id,])
+    Ytest.pred = predict(full.model, newdata = myData[test.id,])
+    MSPE[i,1] = mean((Y[test.id] - Ytest.pred)^2)
+    #Ridge min
+    cv.out <- cv.glmnet(X[-test.id, ], Y[-test.id], alpha = 0)
+    best.lam <- cv.out$lambda.min
+    Ytest.pred <- predict(cv.out, s = best.lam, newx = X[test.id, ])
+    MSPE[i,2] <- mean((Y[test.id] - Ytest.pred)^2)
+    #Ridge 1se
+    cv.out <- cv.glmnet(X[-test.id, ], Y[-test.id], alpha = 0)
+    lam.1se <- cv.out$lambda.1se
+    Ytest.pred.1se <- predict(cv.out, s= lam.1se, newx = X[test.id,])
+    MSPE[i,3] <- mean((Y[test.id] - Ytest.pred.1se)^2)
+    #lasso min
+    cv.out <- cv.glmnet(X[-test.id, ], Y[-test.id], alpha = 1)
+    best.lam <- cv.out$lambda.min
+    Ytest.pred <- predict(cv.out, s = best.lam, newx = X[test.id, ])
+    MSPE[i,4] <- mean((Ytest.pred - Y[test.id])^2)
+    #lasso 1se
+    cv.out <- cv.glmnet(X[-test.id, ], Y[-test.id], alpha = 1)
+    best.lam <- cv.out$lambda.1se
+    Ytest.pred <- predict(cv.out, s = best.lam, newx = X[test.id, ])
+    MSPE[i,5] <- mean((Ytest.pred - Y[test.id])^2)
+    #lasso refit
+    mylasso.coef = predict(cv.out, s = best.lam, type = "coefficients")
+    var.sel = row.names(mylasso.coef)[which(mylasso.coef != 0)[-1]]
+    mylasso.refit = lm(Y ~ ., myData[-test.id, c("Y", var.sel)])
+    Ytest.pred = predict(mylasso.refit, newdata = myData[test.id, ])
+    MSPE[i,6] = mean((Ytest.pred - Y[test.id])^2)
+    #PCR
+    mypcr = pcr(Y ~ ., data= myData[-test.id, ], validation="CV")
+    CVerr = RMSEP(mypcr)$val[1, , ]
+    adjCVerr = RMSEP(mypcr)$val[2, , ]
+    best.ncomp = which.min(CVerr) - 1
+    if (best.ncomp==0) {
+        Ytest.pred = mean(myData$Y[-test.id])
+    } else {
+        Ytest.pred = predict(mypcr, myData[test.id,], ncomp=best.ncomp)
+    }
+    MSPE[i,7] = mean((Ytest.pred - myData$Y[test.id])^2)
+}
+#MSPE BoxPlot
+MSPE_plot = as.data.frame(MSPE)
+melterrData <- melt(MSPE_plot)
+ggplot(melterrData,aes(variable, value,color=variable)) +
+    geom_boxplot() +
+    guides(fill=FALSE,color=FALSE)+
+    xlab("Method") +
+    ylab("MSPE")+
+    labs(title="BostonData2 MSPE")
+
+```
+```{r}
+MSPE
+```
+
+# part 3
+
+
+```{r}
+myData = read.csv("BostonData3.csv")
+myData = myData[, -1]
+dim(myData)
+```
+```{r}
+myData
+```
+
+```{r}
+X = data.matrix(myData[,-1])  
+Y = myData[,1] 
+```
+
+```{r}
+library(reshape2)
+T = 50
+n = length(Y)
+MSPE = matrix(0,50,6)
+colnames(MSPE) = c("R_min", "R_1se", "L_min", "L_1se", "L_Refit", "PCR")
+for(i in 1:50){
+    ntest = round(n * 0.25)  # test set size
+    ntrain = n-ntest  # training set size
+    all.test.id = matrix(0, ntest, 50)  #
+    for(t in 1:50){
+        all.test.id[, t] = sample(1:n, ntest)
+    }
+    save(all.test.id, file="alltestID.RData")
+    test.id = all.test.id[,i]
+    #full model
+    #Ridge min
+    cv.out <- cv.glmnet(X[-test.id, ], Y[-test.id], alpha = 0)
+    best.lam <- cv.out$lambda.min
+    Ytest.pred <- predict(cv.out, s = best.lam, newx = X[test.id, ])
+    MSPE[i,1] <- mean((Y[test.id] - Ytest.pred)^2)
+    #Ridge 1se
+    cv.out <- cv.glmnet(X[-test.id, ], Y[-test.id], alpha = 0)
+    lam.1se <- cv.out$lambda.1se
+    Ytest.pred.1se <- predict(cv.out, s= lam.1se, newx = X[test.id,])
+    MSPE[i,2] <- mean((Y[test.id] - Ytest.pred.1se)^2)
+    #lasso min
+    cv.out <- cv.glmnet(X[-test.id, ], Y[-test.id], alpha = 1)
+    best.lam <- cv.out$lambda.min
+    Ytest.pred <- predict(cv.out, s = best.lam, newx = X[test.id, ])
+    MSPE[i,3] <- mean((Ytest.pred - Y[test.id])^2)
+    #lasso 1se
+    cv.out <- cv.glmnet(X[-test.id, ], Y[-test.id], alpha = 1)
+    best.lam <- cv.out$lambda.1se
+    Ytest.pred <- predict(cv.out, s = best.lam, newx = X[test.id, ])
+    MSPE[i,4] <- mean((Ytest.pred - Y[test.id])^2)
+    #lasso refit
+    mylasso.coef = predict(cv.out, s = best.lam, type = "coefficients")
+    var.sel = row.names(mylasso.coef)[which(mylasso.coef != 0)[-1]]
+    mylasso.refit = lm(Y ~ ., myData[-test.id, c("Y", var.sel)])
+    Ytest.pred = predict(mylasso.refit, newdata = myData[test.id, ])
+    MSPE[i,5] = mean((Ytest.pred - Y[test.id])^2)
+    #PCR
+    mypcr = pcr(Y ~ ., data= myData[-test.id, ], validation="CV")
+    CVerr = RMSEP(mypcr)$val[1, , ]
+    adjCVerr = RMSEP(mypcr)$val[2, , ]
+    best.ncomp = which.min(CVerr) - 1
+    if (best.ncomp==0) {
+        Ytest.pred = mean(myData$Y[-test.id])
+    } else {
+        Ytest.pred = predict(mypcr, myData[test.id,], ncomp=best.ncomp)
+    }
+    MSPE[i,6] = mean((Ytest.pred - myData$Y[test.id])^2)
+}
+#MSPE BoxPlot
+MSPE_plot = as.data.frame(MSPE)
+melterrData <- melt(MSPE_plot)
+ggplot(melterrData,aes(variable, value,color=variable)) +
+    geom_boxplot() +
+    guides(fill=FALSE,color=FALSE)+
+    xlab("Method") +
+    ylab("MSPE")+
+    labs(title="BostonData3 MSPE")
+```
+
+
+# Comment
+Comment: After adding the noise information, it seems that the error of ridge method increased a lot, and the error of lasso method did not change a lot. For PCR method, the error also increased a lot. Therefore, ridge model and PCR model might be very sensitive to noise.

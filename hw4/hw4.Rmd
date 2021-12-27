@@ -1,0 +1,343 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+# Part 1
+```{r}
+Estep <- function(data, G, para){
+  # Your Code
+  # Return the n-by-G probability matrix
+  
+  pr = para$prob 
+  mu = para$mean 
+  invr = solve(para$Sigma)
+  n_row = nrow(data)
+  temp = NULL
+  for(k in 1:G)
+  {
+    temp = cbind(temp,apply(data, 1, function(x) t(x-mu[,k])%*% invr %*% (x-mu[,k])))
+  }
+  temp = -temp/2 + matrix(log(pr), nrow = n_row, ncol=G, byrow=T)
+  temp = exp(temp)
+  temp = temp/apply(temp, 1, sum)
+  
+  return (temp)
+  }
+
+Mstep <- function(data, G, para, post.prob){ 
+  # Your Code
+  # Return the updated parameters
+  prob.new = apply(post.prob, 2, sum) / nrow(post.prob)
+  
+  mean.new = sweep(t(data) %*% post.prob, 2, apply(post.prob, 2, sum), '/')
+  
+  data = data.matrix(data)
+  newsig = 0
+  for(i in 1:G)
+  {
+    temp = t(sweep(data, 2, mean.new[, i], FUN = '-')) %*% 
+      ((sweep(data, 2, mean.new[, i], FUN = '-')) * post.prob[,i]) 
+    
+    temp = temp/sum(post.prob)
+    newsig = newsig + temp
+  }
+  
+  return(list(prob = prob.new, mean=mean.new, Sigma = newsig))
+  }
+
+myEM <- function(data, itmax, G, para){
+  # itmax: num of iterations
+  # G:     num of components
+  # para:  list of parameters (prob, mean, Sigma)
+  for(t in 1:itmax){
+    post.prob <- Estep(data, G, para)
+    para <- Mstep(data, G, para, post.prob)
+  }
+  return(para)
+}
+```
+
+```{r}
+options(digits=8)
+options()$digits
+library(mclust)
+dim(faithful)
+head(faithful)
+```
+```{r}
+K <- 2
+n <- nrow(faithful)
+set.seed(234)  # replace 234 by the last 4-dig of your University ID
+gID <- sample(1:K, n, replace = TRUE)
+Z <- matrix(0, n, K)
+for(k in 1:K)
+  Z[gID == k, k] <- 1 
+ini0 <- mstep(modelName="EEE", faithful , Z)$parameters
+```
+```{r}
+para0 <- list(prob = ini0$pro, 
+              mean = ini0$mean, 
+              Sigma = ini0$variance$Sigma)
+para0
+```
+```{r}
+myEM(data=faithful, itmax=20, G=K, para=para0)
+```
+```{r}
+Rout <- em(modelName = "EEE", data = faithful,
+           control = emControl(eps=0, tol=0, itmax = 20), 
+           parameters = ini0)$parameters
+list(Rout$pro, Rout$mean, Rout$variance$Sigma)
+```
+
+```{r}
+K <- 3
+set.seed(234)  # replace 234 by the last 4-dig of your University ID
+gID <- sample(1:K, n, replace = TRUE)
+Z <- matrix(0, n, K)
+for(k in 1:K)
+  Z[gID == k, k] <- 1 
+ini0 <- mstep(modelName="EEE", faithful , Z)$parameters
+para0 <- list(prob = ini0$pro, 
+              mean = ini0$mean, 
+              Sigma = ini0$variance$Sigma)
+para0
+```
+```{r}
+myEM(data=faithful, itmax=20, G=K, para=para0)
+```
+
+```{r}
+Rout <- em(modelName = "EEE", data = faithful,
+           control = emControl(eps=0, tol=0, itmax = 20), 
+           parameters = ini0)$parameters
+list(Rout$pro, Rout$mean, Rout$variance$Sigma)
+```
+
+# Part 2
+
+```{r}
+myBW = function(x, para, n.iter = 100){
+  # Input:
+  # x: T-by-1 observation sequence
+  # para: initial parameter value
+  # Output updated para value (A and B; we do not update w)
+  
+  for(i in 1:n.iter){
+    para = BW.onestep(x, para)
+  }
+  return(para)
+}
+
+BW.onestep = function(x, para){
+  # Input: 
+  # x: T-by-1 observation sequence
+  # para: mx, mz, and current para values for
+  #    A: initial estimate for mz-by-mz transition matrix
+  #    B: initial estimate for mz-by-mx emission matrix
+  #    w: initial estimate for mz-by-1 initial distribution over Z_1
+  # Output the updated parameters after one iteration
+  # We DO NOT update the initial distribution w
+  
+  T = length(x)
+  mz = para$mz
+  mx = para$mx
+  A = para$A
+  B = para$B
+  w = para$w
+  alp = forward.prob(x, para)
+  beta = backward.prob(x, para)
+  
+  myGamma = array(0, dim=c(mz, mz, T-1))
+  #######################################
+  ## YOUR CODE: 
+  ## Compute gamma_t(i,j) P(Z[t] = i, Z[t+1]=j), 
+  ## for t=1:T-1, i=1:mz, j=1:mz, 
+  ## which are stored in an array, myGamma
+  #######################################
+  for(i in 1:T-1)
+  {
+    myGamma[1,1,i] = alp[i,1]*A[1,1]*B[1,x[i+1]]*beta[i+1,1]
+    myGamma[1,2,i] = alp[i,1]*A[1,2]*B[2,x[i+1]]*beta[i+1,2]
+    myGamma[2,1,i] = alp[i,2]*A[2,1]*B[1,x[i+1]]*beta[i+1,1]
+    myGamma[2,2,i] = alp[i,2]*A[2,2]*B[2,x[i+1]]*beta[i+1,2]
+  }
+
+  # M-step for parameter A
+  #######################################
+  ## YOUR CODE: 
+  ## A = ....
+  #######################################
+  A = rowSums(myGamma, dims=2)
+  A = A/rowSums(A)
+  # M-step for parameter B
+  #######################################
+  ## YOUR CODE: 
+  ## B = ....
+  #######################################
+  temp = apply(myGamma, c(1,3), sum)
+  temp = cbind(temp, colSums(myGamma[,,T-1]))
+  for(i in 1:mx)
+  {
+    B[,i] = rowSums(temp[,which(x==i)])
+    
+  }
+  B = B/rowSums(B)
+  para$A = A
+  para$B = B
+  return(para)
+}
+
+forward.prob = function(x, para){
+  # Output the forward probability matrix alp 
+  # alp: T by mz, (t, i) entry = P(x_{1:t}, Z_t = i)
+  T = length(x)
+  mz = para$mz
+  A = para$A
+  B = para$B
+  w = para$w
+  alp = matrix(0, T, mz)
+  
+  # fill in the first row of alp
+  alp[1, ] = w * B[, x[1]]
+  # Recursively compute the remaining rows of alp
+  for(t in 2:T){
+    tmp = alp[t-1, ] %*% A
+    alp[t, ] = tmp * B[, x[t]]
+    }
+  return(alp)
+}
+
+backward.prob = function(x, para){
+  # Output the backward probability matrix beta
+  # beta: T by mz, (t, i) entry = P(x_{1:t}, Z_t = i)
+  T = length(x)
+  mz = para$mz
+  A = para$A
+  B = para$B
+  w = para$w
+  beta = matrix(1, T, mz)
+
+  # The last row of beta is all 1.
+  # Recursively compute the previous rows of beta
+  for(t in (T-1):1){
+    tmp = as.matrix(beta[t+1, ] * B[, x[t+1]])  # make tmp a column vector
+    beta[t, ] = t(A %*% tmp)
+    }
+  return(beta)
+}
+```
+
+
+```{r}
+myViterbi = function(x, para){
+  # Output: most likely sequence of Z (T-by-1)
+  T = length(x)
+  mz = para$mz
+  A = para$A
+  B = para$B
+  w = para$w
+  log.A = log(A)
+  log.w = log(w)
+  log.B = log(B)
+  upb = T-1
+  
+  # Compute delta (in log-scale)
+  delta = matrix(0, T, mz) 
+  # fill in the first row of delta
+  delta[1, ] = log.w + log.B[, x[1]]
+  
+  #######################################
+  ## YOUR CODE: 
+  ## Recursively compute the remaining rows of delta
+  #######################################
+  for (t in 2:T){
+    for (i in 1:mz){
+     delta[t,i] = max(delta[t-1,]+log.A[,i])+log.B[i, x[t]]
+    }
+  }
+  # Compute the most prob sequence Z
+  Z = rep(0, T)
+  # start with the last entry of Z
+  Z[T] = which.max(delta[T, ])
+  
+  #######################################
+  ## YOUR CODE: 
+  ## Recursively compute the remaining entries of Z
+  #######################################
+  for (i in upb:1)
+  {
+    Z[i] = which.max(delta[i,] + log.A[,Z[i+1]])
+  }
+  
+  return(Z)
+}
+```
+
+```{r}
+data = scan("coding4_part2_data.txt")
+
+mz = 2
+mx = 3
+ini.w = rep(1, mz); ini.w = ini.w / sum(ini.w)
+ini.A = matrix(1, 2, 2); ini.A = ini.A / rowSums(ini.A)
+ini.B = matrix(1:6, 2, 3); ini.B = ini.B / rowSums(ini.B)
+ini.para = list(mz = 2, mx = 3, w = ini.w,
+                A = ini.A, B = ini.B)
+
+myout = myBW(data, ini.para, n.iter = 100)
+myout.Z = myViterbi(data, myout)
+myout.Z[myout.Z==1] = 'A'
+myout.Z[myout.Z==2] = 'B'
+```
+
+```{r}
+myout.Z
+```
+
+
+
+```{r}
+library(HMM)
+hmm0 =initHMM(c("A", "B"), c(1, 2, 3),
+              startProbs = ini.w,
+              transProbs = ini.A, 
+              emissionProbs = ini.B)
+Rout = baumWelch(hmm0, data, maxIterations=100, delta=1E-9, pseudoCount=0)
+Rout.Z = viterbi(Rout$hmm, data)
+```
+```{r}
+options(digits=8)
+options()$digits
+```
+```{r}
+myout$A
+```
+
+```{r}
+Rout$hmm$transProbs
+```
+
+```{r}
+myout$B
+```
+
+```{r}
+Rout$hmm$emissionProbs
+```
+
+
+```{r}
+cbind(Rout.Z, myout.Z)[c(1:10, 180:200), ]
+```
+
+```{r}
+sum(Rout.Z != myout.Z)
+```
+
+

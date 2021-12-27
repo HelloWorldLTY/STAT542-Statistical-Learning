@@ -1,0 +1,125 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+```{r}
+#replace missing value with 0
+data <- read.csv("Ames_data.csv")
+testIDs <- read.table("project1_testIDs.dat")
+j <- 2
+train <- data[-testIDs[,j], ]
+test <- data[testIDs[,j], ]
+test.y <- test[, c(1, 83)]
+test <- test[, -83]
+write.csv(train,"train.csv",row.names=FALSE)
+write.csv(test, "test.csv",row.names=FALSE)
+write.csv(test.y,"test_y.csv",row.names=FALSE)
+```
+
+
+
+
+```{r}
+train.y = log10(train$Sale_Price)
+```
+
+
+```{r}
+train$PID=NULL
+train$Sale_Price=NULL
+```
+
+
+```{r}
+train
+```
+
+```{r}
+train.x = train
+train.y
+```
+```{r}
+library(xgboost)
+train.x # train data without "PID" and "Sale_Price"
+train.y # log transformed "Sale_Price"
+
+# replace missing by zero
+train.x$Garage_Yr_Blt[is.na(train.x$Garage_Yr_Blt)] = 0
+
+categorical.vars <- colnames(train.x)[
+  which(sapply(train.x,
+                 function(x) mode(x)=="character"))]
+train.matrix <- train.x[, !colnames(train.x) %in% categorical.vars, 
+                          drop=FALSE]
+n.train <- nrow(train.matrix)
+for(var in categorical.vars){
+    mylevels <- sort(unique(train.x[, var]))
+    m <- length(mylevels)
+    m <- ifelse(m>2, m, 1)
+    tmp.train <- matrix(0, n.train, m)
+    col.names <- NULL
+    for(j in 1:m){
+      tmp.train[train.x[, var]==mylevels[j], j] <- 1
+      col.names <- c(col.names, paste(var, '_', mylevels[j], sep=''))
+      }
+    colnames(tmp.train) <- col.names
+    train.matrix <- cbind(train.matrix, tmp.train)
+  }
+
+
+# Temember to set a seed so we can reproduce your results; 
+# the seed does not need to be related to your UIN. 
+set.seed(5820)
+xgb.model <- xgboost(data = as.matrix(train.matrix), 
+                       label = train.y, max_depth = 6,
+                       eta = 0.05, nrounds = 5000,
+                       subsample = 0.5,
+                       verbose = FALSE)
+```
+```{r}
+summary(xgb.model)
+```
+
+```{r}
+test.y$PID=NULL
+test$PID=NULL
+```
+```{r}
+test.y = log10(test.y)
+```
+
+```{r}
+test.x = test
+test.x$Garage_Yr_Blt[is.na(test.x$Garage_Yr_Blt)] = 0
+
+categorical.vars <- colnames(test.x)[
+  which(sapply(test.x,
+                 function(x) mode(x)=="character"))]
+test.matrix <- test.x[, !colnames(test.x) %in% categorical.vars, 
+                          drop=FALSE]
+n.test <- nrow(test.matrix)
+for(var in categorical.vars){
+    mylevels <- sort(unique(test.x[, var]))
+    m <- length(mylevels)
+    m <- ifelse(m>2, m, 1)
+    tmp.test <- matrix(0, n.test, m)
+    col.names <- NULL
+    for(j in 1:m){
+      tmp.test[test.x[, var]==mylevels[j], j] <- 1
+      col.names <- c(col.names, paste(var, '_', mylevels[j], sep=''))
+      }
+    colnames(tmp.test) <- col.names
+    test.matrix <- cbind(test.matrix, tmp.test)
+  }
+res = predict(xgb.model, newdata = as.matrix(test.matrix) )
+# xgboost can work
+```
+```{r}
+as.matrix(test.matrix)
+```
+

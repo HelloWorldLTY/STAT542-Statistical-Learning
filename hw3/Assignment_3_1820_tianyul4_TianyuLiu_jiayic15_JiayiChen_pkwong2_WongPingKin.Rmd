@@ -1,0 +1,191 @@
+---
+title: "Assignment_3_1820_tianyul4"
+output: html_document
+---
+
+> Jiayi Chen (jiayic15)
+
+> Tianyu Liu (tianyul4)
+
+> Wong Ping Kin Christopher (pkwong2)
+
+Contributions: We each wrote our own codes. After discussion, we put up ideas and thoughts together to came up with this report. Our contributions are equal.
+
+# Part 1
+
+```{r}
+library(splines);
+control = loess.control(surface = "direct")
+```
+
+```{r}
+lo.lev <- function(x1, sp){
+  # x1: n-by-1 feature vector
+  # sp: a numerical value for "span"
+  
+  n = length(x1);
+  lev = rep(0, n)
+  
+  ##############################################
+  # YOUR CODE: Compute the diagonal entries of the 
+  #            smoother matrix S and 
+  #            store it in a vector "lev"
+  # Tip: check how we compute the smoother matrix
+  #      for smoothing spline models
+  ##############################################
+  S = matrix(0, n, n)
+  for ( i in 1:n)
+  {
+    y = rep(0,n)
+    y[i] = 1
+    y_temp = loess(y ~ x1, span = sp, control = loess.control(surface = "direct"))$fitted # from sample code
+    S[,i] = y_temp
+  }
+  
+  lev = diag(S)
+  return(lev)
+}
+
+onestep_CV <- function(x1, y1, sp){
+  
+  ##############################################
+  #  YOUR CODE: 
+  #  1) Fit a loess model y1 ~ x1 with span = sp, and extract 
+  #     the corresponding residual vector
+  #  2) Call lo.lev to obtain the diagonal entries of S
+  #  3) Compute LOO-CV and GCV using formula from lecture notes
+  #    [lec_W5_NonlinearRegression.pdf] page 33. 
+  ##############################################
+  resu = loess(y1 ~ x1, span = sp, control = loess.control(surface = "direct"))$residuals # from sample code
+  s = lo.lev(x1,sp)
+  cv = mean((resu/(1-s))^2)
+  gcv = mean((resu/(1-mean(s)))^2)
+  return(list(cv = cv, gcv = gcv))
+}
+
+myCV <- function(x1, y1, span){
+  # x1: feature vector of length n
+  # y1: response vector of length n
+  # span: a sequence of values for "span"
+  
+  m = length(span)
+  cv = rep(0, m)
+  gcv = rep(0, m)
+  
+  for(i in 1:m){
+    tmp = onestep_CV(x1, y1, span[i])
+    cv[i] = tmp$cv
+    gcv[i] = tmp$gcv
+  }
+  return(list(cv = cv, gcv = gcv))
+}
+```
+
+```{r}
+mydata = read.csv(file = "Coding3_Data.csv")
+dim(mydata)
+```
+
+```{r}
+plot(mydata$x, mydata$y, xlab="", ylab="")
+```
+```{r}
+#get output
+span1 = seq(from = 0.2, by = 0.05, length = 15 )
+cv.out = myCV(mydata$x, mydata$y, span1)
+```
+
+```{r}
+myout = data.frame(CV = cv.out$cv, 
+                   GCV = cv.out$gcv, 
+                   span = span1)
+myout
+```
+```{r}
+myout$span[myout$GCV == min(myout$GCV)]
+```
+```{r}
+myout$span[myout$CV == min(myout$CV)]
+```
+# We get correct answer for part 1
+```{r}
+spangcv.min = 0.5
+plot(mydata$x, mydata$y, xlab="", ylab="", col="gray");
+fx = 1:50/50;
+fy = sin(12*(fx+0.2))/(fx+0.2)
+lines(fx, fy, col=8, lwd=2)
+f = loess(y ~ x, mydata, span = spangcv.min)
+lines(fx, predict(f, data.frame(x = fx), surface = "direct"), 
+      lty=2, lwd=2, col="blue")
+```
+
+
+
+# Part 2
+```{r}
+set.seed(1820) 
+mydata = read.csv("Sales_Transactions_Dataset_Weekly.csv")
+ts = as.matrix(mydata[, 2:53])
+row.names(ts) = mydata[,1]
+ts = ts - rowMeans(ts)
+```
+```{r}
+dim(ts)
+X = ts
+```
+
+
+# Method to calculate B
+```{r}
+#Get F and B
+F = ns(1:52,df=9,intercept = FALSE)
+Bt = solve(t(F) %*% F) %*% t(F) %*% t(X)
+B = t(Bt)
+# run kmeans for B
+k = 6
+mykm1 = kmeans(B,k, nstart=20)
+```
+
+```{r}
+#Get centers
+mycenters1 = F %*% t(mykm1$centers)
+dim(mycenters1)
+```
+
+
+```{r}
+myK = 6
+par(mfrow=c(2,3))
+for(k in 1:myK){
+  id=which(mykm1$cluster==k)
+  plot(NA, xlim = c(1, ncol(ts)), ylim = range(ts), 
+       xlab = "Weeks", ylab = "Weekly Sales")
+  for(i in 1:length(id))
+    lines(1:ncol(ts), ts[id[i],] , col="gray")
+  lines(1:ncol(ts), mycenters1[,k], col="red")
+}
+```
+
+
+
+```{r}
+# run kmeans for X
+mykm2 = kmeans(X,6, nstart = 20)
+mycenters2 = t(mykm2$centers)
+```
+
+
+
+```{r}
+# Draw the plot
+par(mfrow=c(2,3))
+for(k in 1:myK){
+  id=which(mykm2$cluster==k)
+  plot(NA, xlim = c(1, ncol(ts)), ylim = range(ts), 
+       xlab = "Weeks", ylab = "Weekly Sales")
+  for(i in 1:length(id))
+    lines(1:ncol(ts), ts[id[i],] , col="gray")
+  lines(1:ncol(ts), mycenters2[,k], col="red")
+}
+```
+

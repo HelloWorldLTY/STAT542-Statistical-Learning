@@ -1,0 +1,41 @@
+library(text2vec)
+library(glmnet)
+#1. Load all data and  clean up HTML tags
+train = read.table("alldata.tsv",
+                   stringsAsFactors = FALSE,
+                   header = TRUE)
+train = train [,c("id","sentiment","review")]
+train$review = gsub('<.*?>', ' ', train$review)
+#2. Tokenizaton
+it_train = itoken(train$review,
+                  preprocessor = tolower, 
+                  tokenizer = word_tokenizer)
+#3. Create Vocab and remove stop words
+stop_words = c("i", "me", "my", "myself", 
+               "we", "our", "ours", "ourselves", 
+               "you", "your", "yours", 
+               "their", "they", "his", "her", 
+               "she", "he", "a", "an", "and",
+               "is", "was", "are", "were", 
+               "him", "himself", "has", "have", 
+               "it", "its", "the", "us")
+tmp.vocab = create_vocabulary(it_train, 
+                              stopwords = stop_words, 
+                              ngram = c(1L,4L))
+#4. Prune vocab
+tmp.vocab = prune_vocabulary(tmp.vocab, term_count_min = 10,
+                             doc_proportion_max = 0.5,
+                             doc_proportion_min = 0.001)
+#5. Create DTM
+dtm_train  = create_dtm(it_train, vocab_vectorizer(tmp.vocab))
+
+#6. Use Lasso regression model to trim the vocab
+tmpfit = glmnet(x = dtm_train, 
+                y = train$sentiment, 
+                alpha = 1,
+                family='binomial')
+#7. Pick the column with less than 1000 words
+dfmax = max(which(tmpfit$df < 1000))
+myvocab = colnames(dtm_train)[which(tmpfit$beta[, dfmax] != 0)]
+#8.Write myvocab.txt
+write(myvocab, file = "myvocab.txt", sep = '\t')
